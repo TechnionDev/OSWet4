@@ -19,7 +19,7 @@ size_t num_of_allocated_bytes = 0;
 size_t num_of_free_bytes = 0;
 MallocMetadata *request_block(MallocMetadata *last, size_t size) {
     MallocMetadata *meta_block;
-    meta_block = static_cast<MallocMetadata *>(sbrk(sizeof(MallocMetadata) + size));
+    meta_block = (MallocMetadata *)(sbrk(sizeof(MallocMetadata) + size));
     if (meta_block == (void *) -1) {
         return nullptr;
     }
