@@ -9,12 +9,18 @@ void *smalloc(size_t size) {
     if (old_brk == (void *) -1) {
         return nullptr;
     }
-    sbrk(size);
+    void* res = sbrk(size);
 
     return old_brk;
 }
 
 int main() {
     std::cout << "Hello, World!" << std::endl;
+
+    printf("%p\n",smalloc(3));
+    printf("%p\n",smalloc(3));
+    printf("%p\n",smalloc(3));
+    printf("%p\n",smalloc(3));
+    printf("%p\n",smalloc(3));
     return 0;
 }

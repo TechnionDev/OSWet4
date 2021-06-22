@@ -142,14 +142,13 @@ size_t _size_meta_data() {
 
 int main() {
     printf("%lu\n", _size_meta_data());
-    void * ptr = smalloc(10);
-    printf("%p\n", ptr);
-    sfree(ptr);
-    void * ptr_2 = srealloc(nullptr,3);
+    int *arr = (int *) scalloc(1,10);
+    printf("%p\n", arr);
+    sfree(arr);
+    void *ptr_2 = srealloc(nullptr, 3);
     printf("%p\n", ptr_2);
-    printf("%p\n", srealloc(ptr_2,3));
-    printf("%p\n", srealloc(ptr_2,12));
-
+    printf("%p\n", srealloc(ptr_2, 3));
+    printf("%p\n", srealloc(ptr_2, 12));
 
     return 0;
 }
