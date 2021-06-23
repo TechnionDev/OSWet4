@@ -19,7 +19,7 @@ size_t num_of_allocated_bytes = 0;
 size_t num_of_free_bytes = 0;
 MallocMetadata *request_block(MallocMetadata *last, size_t size) {
     MallocMetadata *meta_block;
-    meta_block = (MallocMetadata *)(sbrk(sizeof(MallocMetadata) + size));
+    meta_block = (MallocMetadata *) (sbrk(sizeof(MallocMetadata) + size));
     if (meta_block == (void *) -1) {
         return nullptr;
     }
@@ -76,16 +76,10 @@ void sfree(void *p) {
     if (!p) {
         return;
     }
-    MallocMetadata *curr = block_list_bottom;
-    while (curr) {
-        if (curr + sizeof(MallocMetadata) == p) {
-            curr->is_free = true;
-            num_of_free_blocks++;
-            num_of_free_bytes -= curr->size;
-            return;
-        }
-        curr = curr->next;
-    }
+    MallocMetadata *curr = p - sizeof(MallocMetadata);
+    curr->is_free = true;
+    num_of_free_blocks++;
+    num_of_free_bytes -= curr->size;
 }
 
 void *scalloc(size_t num, size_t size) {
@@ -142,14 +136,13 @@ size_t _size_meta_data() {
 
 int main() {
     printf("%lu\n", _size_meta_data());
-    void * ptr = smalloc(10);
+    void *ptr = smalloc(10);
     printf("%p\n", ptr);
     sfree(ptr);
-    void * ptr_2 = srealloc(nullptr,3);
+    void *ptr_2 = srealloc(nullptr, 3);
     printf("%p\n", ptr_2);
-    printf("%p\n", srealloc(ptr_2,3));
-    printf("%p\n", srealloc(ptr_2,12));
-
+    printf("%p\n", srealloc(ptr_2, 3));
+    printf("%p\n", srealloc(ptr_2, 12));
 
     return 0;
 }
