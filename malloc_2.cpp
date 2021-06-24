@@ -1,22 +1,25 @@
 #include <iostream>
 #include <unistd.h>
 #include <list>
+
 #define MAX_SIZE 100000000
 using namespace std;
+
 class MallocMetadata {
- public:
-  size_t size;
-  bool is_free;
-  MallocMetadata *next;
-  MallocMetadata *prev;
+public:
+    size_t size;
+    bool is_free;
+    MallocMetadata *next;
+    MallocMetadata *prev;
 };
 
-MallocMetadata *block_list_bottom = nullptr;
+MallocMetadata *block_list_tail = nullptr;
 MallocMetadata *block_list_top = nullptr;
 size_t num_of_allocated_blocks = 0;
 size_t num_of_free_blocks = 0;
 size_t num_of_allocated_bytes = 0;
 size_t num_of_free_bytes = 0;
+
 MallocMetadata *request_block(MallocMetadata *last, size_t size) {
     MallocMetadata *meta_block;
     meta_block = (MallocMetadata *) (sbrk(sizeof(MallocMetadata) + size));
@@ -33,8 +36,9 @@ MallocMetadata *request_block(MallocMetadata *last, size_t size) {
     num_of_allocated_bytes += size;
     return meta_block;
 }
+
 MallocMetadata *find_fitting_block(size_t size) {
-    MallocMetadata *curr = block_list_bottom;
+    MallocMetadata *curr = block_list_tail;
     while (curr) {
         if (curr->size >= size && curr->is_free) {
             return curr;
@@ -49,13 +53,13 @@ void *smalloc(size_t size) {
         return nullptr;
     }
     MallocMetadata *requested;
-    if (!block_list_bottom) {
+    if (!block_list_tail) {
         //nothing was allocated
         requested = request_block(nullptr, size);
         if (!requested) {
             return nullptr;
         }
-        block_list_bottom = requested;
+        block_list_tail = requested;
     } else {
         requested = find_fitting_block(size);
         if (!requested) {
@@ -69,14 +73,14 @@ void *smalloc(size_t size) {
             num_of_free_bytes -= requested->size;
         }
     }
-    return requested + sizeof(MallocMetadata);
+    return requested + 1;
 }
 
 void sfree(void *p) {
     if (!p) {
         return;
     }
-    MallocMetadata *curr = p - sizeof(MallocMetadata);
+    MallocMetadata *curr = (MallocMetadata *) p - 1;
     curr->is_free = true;
     num_of_free_blocks++;
     num_of_free_bytes -= curr->size;
@@ -95,41 +99,39 @@ void *srealloc(void *oldp, size_t size) {
     if (!oldp) {
         return smalloc(size);
     }
-    MallocMetadata *curr = block_list_bottom;
-    while (curr) {
-        if (curr + sizeof(MallocMetadata) == oldp) {
-            if (curr->size >= size) {
-                return oldp;
-            } else {
-                void *new_block = smalloc(size);
-                if (!new_block) {
-                    return nullptr;
-                }
-                sfree(oldp);
-                return new_block;
-            }
+    MallocMetadata *curr = (MallocMetadata *) oldp - 1;
+    if (curr->size >= size) {
+        return oldp;
+    } else {
+        void *new_block = smalloc(size);
+        if (!new_block) {
+            return nullptr;
         }
-        curr = curr->next;
+        sfree(oldp);
+        return new_block;
     }
-    //shouldn't reach to this
-    return nullptr;
 }
 
 size_t _num_free_blocks() {
     return num_of_free_blocks;
 }
+
 size_t _num_free_bytes() {
     return num_of_free_bytes;
 }
+
 size_t _num_allocated_blocks() {
     return num_of_allocated_blocks + num_of_free_blocks;
 }
+
 size_t _num_allocated_bytes() {
     return num_of_allocated_bytes + num_of_free_bytes;
 }
+
 size_t _num_meta_data_bytes() {
     return _num_allocated_blocks() * sizeof(MallocMetadata);
 }
+
 size_t _size_meta_data() {
     return sizeof(MallocMetadata);
 }
