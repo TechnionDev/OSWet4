@@ -327,16 +327,28 @@ void MallocMetadata::removeSelfFromBucketChain() {
  */
 MallocMetadata *request_block(size_t size) {
     MallocMetadata *meta_block;
-    meta_block = (MallocMetadata *) (sbrk(sizeof(MallocMetadata) + size));
-    if (meta_block == (void *) -1) {
-        return nullptr;
+    if (page_block_tail and page_block_tail->isFree()) {
+        meta_block = (MallocMetadata *) (sbrk(size - page_block_tail->getSize()));
+        if (meta_block == (void *) -1) {
+            return nullptr;
+        }
+        meta_block = page_block_tail;
+        meta_block->removeSelfFromBucketChain();
+        meta_block->setSize(size);
+        meta_block->setAllocated();
+        return meta_block;
+    } else {
+        meta_block = (MallocMetadata *) (sbrk(sizeof(MallocMetadata) + size));
+        if (meta_block == (void *) -1) {
+            return nullptr;
+        }
+        meta_block->init(size, page_block_tail, false);
+        if (!page_block_head) {
+            page_block_head = meta_block;
+        }
+        page_block_tail = meta_block;
+        return meta_block;
     }
-    meta_block->init(size, page_block_tail, false);
-    if (!page_block_head) {
-        page_block_head = meta_block;
-    }
-    page_block_tail = meta_block;
-    return meta_block;
 }
 
 void *smalloc(size_t size) {
