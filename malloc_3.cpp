@@ -1,6 +1,6 @@
 #include <iostream>
 #include <unistd.h>
-
+#include <sys/mman.h>
 #define MAX_SIZE 100000000
 #define KB 1024
 #define NUM_OF_BUCKETS 128
@@ -353,9 +353,16 @@ void *smalloc(size_t size) {
     if (size == 0 || size > MAX_SIZE) {
         return nullptr;
     }
-    if (size >= NUM_OF_BUCKETS) {
+    if (size >= KB * NUM_OF_BUCKETS) {
         // TODO: Big allocation
-        return nullptr;
+        auto *p = (MallocMetadata *) mmap(nullptr,
+                                          size + sizeof(MallocMetadata),
+                                          PROT_READ | PROT_WRITE,
+                                          MAP_ANONYMOUS,
+                                          -1,
+                                          0);
+        p->setSize(size);
+        return p + 1;
     }
 
     // TODO: Reimplement this to fit the new buckets thingy
@@ -390,6 +397,10 @@ void sfree(void *p) {
         return;
     }
     MallocMetadata *curr = ((MallocMetadata *) p) - 1;
+    if (curr->getSize() >= KB * NUM_OF_BUCKETS) {
+        munmap(curr, curr->getSize() + sizeof(MallocMetadata));
+        return;
+    }
     curr->setFree();
 }
 
@@ -407,6 +418,18 @@ void *srealloc(void *oldp, size_t size) {
         return smalloc(size);
     }
     MallocMetadata *curr = (MallocMetadata *) oldp - 1;
+    if (size >= KB * NUM_OF_BUCKETS) {
+        auto *p = (MallocMetadata *) mmap(nullptr,
+                                          size + sizeof(MallocMetadata),
+                                          PROT_READ | PROT_WRITE,
+                                          MAP_ANONYMOUS,
+                                          -1,
+                                          0);
+        p->setSize(size);
+        memcpy(p + 1, oldp, curr->getSize());
+        munmap(curr, curr->getSize());
+        return p + 1;
+    }
     if (curr->getSize() >= size) {
         return oldp;
     }
@@ -470,6 +493,7 @@ void *srealloc(void *oldp, size_t size) {
     //shouldn't reach to this
     return nullptr;
 }
+//TODO:: go over all of the functions and check if the statistics are updated
 
 size_t _num_free_blocks() {
     return num_of_free_blocks;
