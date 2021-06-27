@@ -34,6 +34,9 @@ class MallocMetadata {
   size_t size;
   bool is_free;
   MallocMetadata *prev;
+  MallocMetadata *next_bucket_block;
+  MallocMetadata *prev_bucket_block;
+  void *bucket_ptr;
   // TODO: change to bitfield to save space
 
 
@@ -122,7 +125,7 @@ class MallocMetadata {
       if (not this->isFree()) {
           throw StillAllocatedException("Can't set the next bucket block while the block for an allocated block");
       }
-      *(MallocMetadata **) (this + 1) = next;
+      this->next_bucket_block = next;
       if (next) {
           next->setPrevBucketBlock(this);
       }
@@ -132,7 +135,7 @@ class MallocMetadata {
       if (not this->isFree()) {
           throw StillAllocatedException("Can't set the prev bucket block while the block for an allocated block");
       }
-      *((MallocMetadata **) (this + 1) + 1) = prev;
+      this->prev_bucket_block = prev;
       if (prev) {
           prev->setNextBucketBlock(this);
       }
@@ -142,28 +145,28 @@ class MallocMetadata {
       if (not this->isFree()) {
           throw StillAllocatedException("Can't get the next bucket block of an allocated block");
       }
-      return *(MallocMetadata **) (this + 1);
+      return this->next_bucket_block;
   }
 
   MallocMetadata *getPrevBucketBlock() {
       if (not this->isFree()) {
           throw StillAllocatedException("Can't get the prev bucket block of an allocated block");
       }
-      return *((MallocMetadata **) (this + 1) + 1);
+      return this->prev_bucket_block;
   }
 
   void *getBucketPtr() {
       if (not this->isFree()) {
           throw StillAllocatedException("Can't get the bucket of an allocated block");
       }
-      return *((void **) (this + 1) + 2);
+      return this->bucket_ptr;
   }
 
   void setBucketPtr(void *bucket) {
       if (not this->isFree()) {
           throw StillAllocatedException("Can't set the bucket of an allocated block");
       }
-      *((void **) (this + 1) + 2) = bucket;
+      this->bucket_ptr = bucket;
   }
 };
 
