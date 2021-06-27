@@ -1,11 +1,11 @@
 #include <iostream>
 #include <unistd.h>
-#include <list>
-
+#include <sys/mman.h>
 #define MAX_SIZE 100000000
 #define KB 1024
 #define NUM_OF_BUCKETS 128
 #define MIN_SPLIT_BLOCK_SIZE_BYTES 128
+#define MIN_SIZE 24
 // TODO: Replace macro with this: min(((X) / NUM_OF_BUCKETS / KB), NUM_OF_BUCKETS - 1)
 #define SIZE_TO_BUCKET(X) ((X) / NUM_OF_BUCKETS / KB)
 #define EXCEPTION(name)                                  \
@@ -14,6 +14,7 @@
         name(std::string str) : MallocException(str){};  \
     }
 
+#define max(first, second) ((first) > (second) ? (first) : (second))
 
 using namespace std;
 
@@ -22,169 +23,167 @@ static size_t num_of_free_blocks = 0;
 static size_t num_of_allocated_bytes = 0;
 static size_t num_of_free_bytes = 0;
 
-
 class MallocException : public runtime_error {
-public:
-    MallocException(string str) : runtime_error(str) {};
+ public:
+  MallocException(string str) : runtime_error(str) {};
 };
 
 EXCEPTION(StillAllocatedException);
 
 class MallocMetadata {
-    size_t size;
-    bool is_free;
-    MallocMetadata *prev;
-    // TODO: change to bitfield to save space
+  size_t size;
+  bool is_free;
+  MallocMetadata *prev;
+  // TODO: change to bitfield to save space
 
 
-    /**
-     * Private function used to merge a recently freed block with its adjacent neighbours.
-     * Be warned:
-     * The function may destroy `this` so after using this function, you cannot rely on any of the object's data and should definitely not use any other functions of this object.
-     */
-    void mergeWithAdjacent();
+  /**
+   * Private function used to merge a recently freed block with its adjacent neighbours.
+   * Be warned:
+   * The function may destroy `this` so after using this function, you cannot rely on any of the object's data and should definitely not use any other functions of this object.
+   */
+  void mergeWithAdjacent();
 
-public:
+ public:
 
-    /**
-     * This function allocates a newly created object.
-     *
-     * !! It should **not** be used on previously allocated objects as it would mess up the stats !!
-     * @param new_size The size of the block (that is exposed to the user)
-     * @param new_prev The previous block in the heap
-     * @param new_is_free Whether to allocate the block as free memory or not
-     */
-    void init(size_t new_size, MallocMetadata *new_prev, bool new_is_free) {
-        if (new_is_free) {
-            num_of_allocated_bytes += new_size;
-            num_of_allocated_blocks++;
-        } else {
-            num_of_free_bytes += new_size;
-            num_of_free_blocks++;
-        }
-        this->is_free = new_is_free;
-        this->prev = new_prev;
-    }
+  /**
+   * This function allocates a newly created object.
+   *
+   * !! It should **not** be used on previously allocated objects as it would mess up the stats !!
+   * @param new_size The size of the block (that is exposed to the user)
+   * @param new_prev The previous block in the heap
+   * @param new_is_free Whether to allocate the block as free memory or not
+   */
+  void init(size_t new_size, MallocMetadata *new_prev, bool new_is_free) {
+      if (new_is_free) {
+          num_of_allocated_bytes += new_size;
+          num_of_allocated_blocks++;
+      } else {
+          num_of_free_bytes += new_size;
+          num_of_free_blocks++;
+      }
+      this->is_free = new_is_free;
+      this->prev = new_prev;
+  }
 
-    size_t getSize() {
-        return this->size;
-    }
+  size_t getSize() {
+      return this->size;
+  }
 
-    void setSize(size_t size) {
-        if (this->isFree()) {
-            num_of_free_bytes -= this->size - size;
-        } else {
-            num_of_allocated_bytes -= this->size - size;
-        }
-        this->size = size;
-    }
+  void setSize(size_t size) {
+      if (this->isFree()) {
+          num_of_free_bytes -= this->size - size;
+      } else {
+          num_of_allocated_bytes -= this->size - size;
+      }
+      this->size = size;
+  }
 
-    bool isFree() {
-        return this->is_free;
-    }
+  bool isFree() {
+      return this->is_free;
+  }
 
-    void setFree() {
-        num_of_allocated_blocks--;
-        num_of_free_blocks++;
-        num_of_free_bytes += this->getSize();
-        num_of_allocated_bytes -= this->getSize();
-        this->is_free = true;
-        this->mergeWithAdjacent();
-        // The state of `this` is undefined after using mergeWithAdjacent
-    }
+  void setFree() {
+      num_of_allocated_blocks--;
+      num_of_free_blocks++;
+      num_of_free_bytes += this->getSize();
+      num_of_allocated_bytes -= this->getSize();
+      this->is_free = true;
+      this->mergeWithAdjacent();
+      // The state of `this` is undefined after using mergeWithAdjacent
+  }
 
-    void setAllocated() {
-        if (not this->isFree()) {
-            throw StillAllocatedException("Can't allocate a block which is already allocated");
-        }
-        num_of_free_blocks--;
-        num_of_allocated_blocks++;
-        num_of_free_bytes -= this->getSize();
-        num_of_allocated_bytes += this->getSize();
-        this->is_free = false;
-    }
+  void setAllocated() {
+      if (not this->isFree()) {
+          throw StillAllocatedException("Can't allocate a block which is already allocated");
+      }
+      num_of_free_blocks--;
+      num_of_allocated_blocks++;
+      num_of_free_bytes -= this->getSize();
+      num_of_allocated_bytes += this->getSize();
+      this->is_free = false;
+  }
 
-    MallocMetadata *getPrevInHeap() {
-        return this->prev;
-    }
+  MallocMetadata *getPrevInHeap() {
+      return this->prev;
+  }
 
-    MallocMetadata *getNextInHeap() {
-        return (MallocMetadata *) (((char *) this) + sizeof(MallocMetadata) + this->size);
-    }
+  MallocMetadata *getNextInHeap() {
+      return (MallocMetadata *) (((char *) this) + sizeof(MallocMetadata) + this->size);
+  }
 
-    void removeSelfFromBucketChain();
+  void removeSelfFromBucketChain();
 
-    /**
-     * Sets the next block in the **bucket**. Should only be used when the block is free
-     * @param next The next block in the bucket
-     */
-    void setNextBucketBlock(MallocMetadata *next) {
-        if (not this->isFree()) {
-            throw StillAllocatedException("Can't set the next bucket block while the block for an allocated block");
-        }
-        *(MallocMetadata **) (this + 1) = next;
-        if (next) {
-            next->setPrevBucketBlock(this);
-        }
-    }
+  /**
+   * Sets the next block in the **bucket**. Should only be used when the block is free
+   * @param next The next block in the bucket
+   */
+  void setNextBucketBlock(MallocMetadata *next) {
+      if (not this->isFree()) {
+          throw StillAllocatedException("Can't set the next bucket block while the block for an allocated block");
+      }
+      *(MallocMetadata **) (this + 1) = next;
+      if (next) {
+          next->setPrevBucketBlock(this);
+      }
+  }
 
-    void setPrevBucketBlock(MallocMetadata *prev) {
-        if (not this->isFree()) {
-            throw StillAllocatedException("Can't set the prev bucket block while the block for an allocated block");
-        }
-        *((MallocMetadata **) (this + 1) + 1) = prev;
-        if (prev) {
-            prev->setNextBucketBlock(this);
-        }
-    }
+  void setPrevBucketBlock(MallocMetadata *prev) {
+      if (not this->isFree()) {
+          throw StillAllocatedException("Can't set the prev bucket block while the block for an allocated block");
+      }
+      *((MallocMetadata **) (this + 1) + 1) = prev;
+      if (prev) {
+          prev->setNextBucketBlock(this);
+      }
+  }
 
-    MallocMetadata *getNextBucketBlock() {
-        if (not this->isFree()) {
-            throw StillAllocatedException("Can't get the next bucket block of an allocated block");
-        }
-        return *(MallocMetadata **) (this + 1);
-    }
+  MallocMetadata *getNextBucketBlock() {
+      if (not this->isFree()) {
+          throw StillAllocatedException("Can't get the next bucket block of an allocated block");
+      }
+      return *(MallocMetadata **) (this + 1);
+  }
 
-    MallocMetadata *getPrevBucketBlock() {
-        if (not this->isFree()) {
-            throw StillAllocatedException("Can't get the prev bucket block of an allocated block");
-        }
-        return *((MallocMetadata **) (this + 1) + 1);
-    }
+  MallocMetadata *getPrevBucketBlock() {
+      if (not this->isFree()) {
+          throw StillAllocatedException("Can't get the prev bucket block of an allocated block");
+      }
+      return *((MallocMetadata **) (this + 1) + 1);
+  }
 
-    void *getBucketPtr() {
-        if (not this->isFree()) {
-            throw StillAllocatedException("Can't get the bucket of an allocated block");
-        }
-        return *((void **) (this + 1) + 2);
-    }
+  void *getBucketPtr() {
+      if (not this->isFree()) {
+          throw StillAllocatedException("Can't get the bucket of an allocated block");
+      }
+      return *((void **) (this + 1) + 2);
+  }
 
-    void setBucketPtr(void *bucket) {
-        if (not this->isFree()) {
-            throw StillAllocatedException("Can't set the bucket of an allocated block");
-        }
-        *((void **) (this + 1) + 2) = bucket;
-    }
+  void setBucketPtr(void *bucket) {
+      if (not this->isFree()) {
+          throw StillAllocatedException("Can't set the bucket of an allocated block");
+      }
+      *((void **) (this + 1) + 2) = bucket;
+  }
 };
 
 class Bucket {
-    MallocMetadata *list_head;
-    MallocMetadata *list_tail;
+  MallocMetadata *list_head;
+  MallocMetadata *list_tail;
 
-    friend void MallocMetadata::removeSelfFromBucketChain();
+  friend void MallocMetadata::removeSelfFromBucketChain();
 
-public:
-    Bucket() : list_head(nullptr), list_tail(nullptr) {};
+ public:
+  Bucket() : list_head(nullptr), list_tail(nullptr) {};
 
-    void addBlock(MallocMetadata *block);
+  void addBlock(MallocMetadata *block);
 
-    MallocMetadata *acquireBlock(size_t size);
+  MallocMetadata *acquireBlock(size_t size);
 };
 
 static Bucket buckets[NUM_OF_BUCKETS] = {Bucket()};
 static MallocMetadata *page_block_head = nullptr;
 static MallocMetadata *page_block_tail = nullptr;
-
 
 void Bucket::addBlock(MallocMetadata *block) {
     if (not block->isFree()) {
@@ -301,7 +300,8 @@ void MallocMetadata::mergeWithAdjacent() {
 
 void MallocMetadata::removeSelfFromBucketChain() {
     if (not this->isFree()) {
-        throw StillAllocatedException("Can't remove a block which isn't free from bucket chain. The block can't possibly be in a bucket chain");
+        throw StillAllocatedException(
+            "Can't remove a block which isn't free from bucket chain. The block can't possibly be in a bucket chain");
     }
     MallocMetadata *prev = this->getPrevBucketBlock();
     MallocMetadata *next = this->getNextBucketBlock();
@@ -320,7 +320,6 @@ void MallocMetadata::removeSelfFromBucketChain() {
     this->setBucketPtr(nullptr);
 }
 
-
 /**
  * Increases the page break to create a new block. Adds it to the general
  * @param size
@@ -328,6 +327,7 @@ void MallocMetadata::removeSelfFromBucketChain() {
  */
 MallocMetadata *request_block(size_t size) {
     MallocMetadata *meta_block;
+    size = max(MIN_SIZE, size);
     if (page_block_tail and page_block_tail->isFree()) {
         meta_block = (MallocMetadata *) (sbrk(size - page_block_tail->getSize()));
         if (meta_block == (void *) -1) {
@@ -356,9 +356,16 @@ void *smalloc(size_t size) {
     if (size == 0 || size > MAX_SIZE) {
         return nullptr;
     }
-    if (size >= NUM_OF_BUCKETS) {
+    if (size >= KB * NUM_OF_BUCKETS) {
         // TODO: Big allocation
-        return nullptr;
+        auto *p = (MallocMetadata *) mmap(nullptr,
+                                          size + sizeof(MallocMetadata),
+                                          PROT_READ | PROT_WRITE,
+                                          MAP_ANONYMOUS,
+                                          -1,
+                                          0);
+        p->setSize(size);
+        return p + 1;
     }
 
     // TODO: Reimplement this to fit the new buckets thingy
@@ -393,6 +400,10 @@ void sfree(void *p) {
         return;
     }
     MallocMetadata *curr = ((MallocMetadata *) p) - 1;
+    if (curr->getSize() >= KB * NUM_OF_BUCKETS) {
+        munmap(curr, curr->getSize() + sizeof(MallocMetadata));
+        return;
+    }
     curr->setFree();
 }
 
@@ -410,9 +421,70 @@ void *srealloc(void *oldp, size_t size) {
         return smalloc(size);
     }
     MallocMetadata *curr = (MallocMetadata *) oldp - 1;
+    if (size >= KB * NUM_OF_BUCKETS) {
+        auto *p = (MallocMetadata *) mmap(nullptr,
+                                          size + sizeof(MallocMetadata),
+                                          PROT_READ | PROT_WRITE,
+                                          MAP_ANONYMOUS,
+                                          -1,
+                                          0);
+        p->setSize(size);
+        memcpy(p + 1, oldp, curr->getSize());
+        munmap(curr, curr->getSize());
+        return p + 1;
+    }
     if (curr->getSize() >= size) {
         return oldp;
+    }
+    MallocMetadata *prev = curr->getPrevInHeap();
+    MallocMetadata *next = curr->getNextInHeap();
+    if (prev and prev->isFree() and prev->getSize() + curr->getSize() >= size) {
+        //merge with only the prev block
+        prev->removeSelfFromBucketChain();
+        prev->setAllocated();
+        prev->setSize(prev->getSize() + curr->getSize() + sizeof(MallocMetadata));
+        memcpy(prev + 1, oldp, curr->getSize());
+        if (prev->getSize() >= MIN_SPLIT_BLOCK_SIZE_BYTES + size) {
+            size_t leftover_size = prev->getSize() - sizeof(MallocMetadata) - size;
+            prev->setSize(size);
+            // Split the block and add the leftover to the current bucket
+            MallocMetadata *leftover = (MallocMetadata *) ((char *) (prev + 1) + size);
+            leftover->init(leftover_size, prev, true);
+            buckets[SIZE_TO_BUCKET(leftover_size)].addBlock(leftover);
+        }
+        return prev;
+    } else if (curr != page_block_tail and next->isFree() and next->getSize() + curr->getSize() >= size) {
+        //merge with only the next block
+        next->removeSelfFromBucketChain();
+        curr->setSize(curr->getSize() + next->getSize() + sizeof(MallocMetadata));
+        if (curr->getSize() >= MIN_SPLIT_BLOCK_SIZE_BYTES + size) {
+            size_t leftover_size = curr->getSize() - sizeof(MallocMetadata) - size;
+            curr->setSize(size);
+            // Split the block and add the leftover to the current bucket
+            MallocMetadata *leftover = (MallocMetadata *) ((char *) (curr + 1) + size);
+            leftover->init(leftover_size, curr, true);
+            buckets[SIZE_TO_BUCKET(leftover_size)].addBlock(leftover);
+        }
+        return curr;
+    } else if (curr != page_block_tail and prev and next->isFree() and prev->isFree()
+        and prev->getSize() + next->getSize() + curr->getSize() >= size) {
+        //merge with the next and prev block
+        next->removeSelfFromBucketChain();
+        prev->removeSelfFromBucketChain();
+        prev->setAllocated();
+        prev->setSize(prev->getSize() + curr->getSize() + next->getSize() + 2 * sizeof(MallocMetadata));
+        memcpy(prev + 1, oldp, curr->getSize());
+        if (prev->getSize() >= MIN_SPLIT_BLOCK_SIZE_BYTES + size) {
+            size_t leftover_size = prev->getSize() - sizeof(MallocMetadata) - size;
+            prev->setSize(size);
+            // Split the block and add the leftover to the current bucket
+            MallocMetadata *leftover = (MallocMetadata *) ((char *) (prev + 1) + size);
+            leftover->init(leftover_size, prev, true);
+            buckets[SIZE_TO_BUCKET(leftover_size)].addBlock(leftover);
+        }
+        return prev;
     } else {
+        //allocate an entirely new block, and free the old block
         void *new_block = smalloc(size);
         if (!new_block) {
             return nullptr;
@@ -424,6 +496,7 @@ void *srealloc(void *oldp, size_t size) {
     //shouldn't reach to this
     return nullptr;
 }
+//TODO:: go over all of the functions and check if the statistics are updated
 
 size_t _num_free_blocks() {
     return num_of_free_blocks;
