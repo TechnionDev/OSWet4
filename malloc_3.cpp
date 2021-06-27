@@ -267,17 +267,18 @@ MallocMetadata *Bucket::acquireBlock(size_t size) {
     return nullptr;
 }
 
-void MallocMetadata::mergeWithAdjacent(void) {
+void MallocMetadata::mergeWithAdjacent() {
     MallocMetadata *adjacent = nullptr;
     // Try merge with adjacent free blocks
     if (this != page_block_tail) {
         adjacent = this->getNextInHeap();
         if (adjacent->isFree()) {
             adjacent->removeSelfFromBucketChain();
+            // TODO: Do a MallocMetadata->destroy() function
+            num_of_free_bytes -= adjacent->getSize();
             this->setSize(this->getSize() + adjacent->getSize() + sizeof(MallocMetadata));
             // Updates stats
             num_of_free_blocks--;
-            num_of_free_bytes += sizeof(MallocMetadata);
             this->removeSelfFromBucketChain();
             buckets[SIZE_TO_BUCKET(this->getSize())].addBlock(this);
         }
@@ -287,11 +288,11 @@ void MallocMetadata::mergeWithAdjacent(void) {
         adjacent = this->getPrevInHeap();
         if (adjacent->isFree()) {
             this->removeSelfFromBucketChain();
+            num_of_free_bytes -= this->getSize(); // TODO: Do a MallocMetadata->destroy() function
             adjacent->setSize(adjacent->getSize() + this->getSize() + sizeof(MallocMetadata));
             // Note that from now and on `this` is not defined. Take care....
             // Updates stats
             num_of_free_blocks--;
-            num_of_free_bytes += sizeof(MallocMetadata);
             adjacent->removeSelfFromBucketChain();
             buckets[SIZE_TO_BUCKET(adjacent->getSize())].addBlock(adjacent);
         }
