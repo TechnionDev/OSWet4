@@ -1,6 +1,6 @@
 #include <iostream>
 #include <unistd.h>
-#include <list>
+#include <string.h>
 
 #define MAX_SIZE 100000000
 using namespace std;
@@ -136,15 +136,3 @@ size_t _size_meta_data() {
     return sizeof(MallocMetadata);
 }
 
-int main() {
-    printf("%lu\n", _size_meta_data());
-    void *ptr = smalloc(10);
-    printf("%p\n", ptr);
-    sfree(ptr);
-    void *ptr_2 = srealloc(nullptr, 3);
-    printf("%p\n", ptr_2);
-    printf("%p\n", srealloc(ptr_2, 3));
-    printf("%p\n", srealloc(ptr_2, 12));
-
-    return 0;
-}
