@@ -3,6 +3,9 @@ cmake-build-debug/
 tamuz_tests_hw4_malloc2.cpp
 tamuz_tests_hw4_malloc3.cpp
 tests_ariels/
+.DS_Store/
+.gdbinit
+tests_ariel/
 
 # Prerequisites
 *.d
