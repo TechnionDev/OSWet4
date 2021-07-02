@@ -30,20 +30,21 @@ void printMemory(void *start, bool onlyList) {
 		std::cout << "Printing Memory List\n";
 	}
 	while (current) {
-		if (current->is_free) {
-			std::cout << "|F:" << current->size;
+		if (current->isFree()) {
+			std::cout << "|F:" << current->getSize();
 		} else {
-			std::cout << "|U:" << current->size;
+			std::cout << "|U:" << current->getSize();
 		}
-		size += current->size;
+		size += current->getSize();
 		blocks++;
-		current = current->next;
+		current = current->getNextInHeap();
 	}
 	std::cout << "|";
 	if (!onlyList) {
 		std::cout << std::endl << "Memory Info:\nNumber Of Blocks: " << blocks << "\nTotal Size (without Metadata): " << size << std::endl;
 		std::cout << "Size of Metadata: " << sizeof(T) << std::endl;
 	}
+//	std::cout << std::endl;
 }
 
 void resetStats(stats &current_stats) {
@@ -58,16 +59,16 @@ void resetStats(stats &current_stats) {
 template<class T>
 void updateStats(void *start, stats &current_stats, size_t bytes_mmap, int blocks_mmap) {
 	resetStats(current_stats);
-	T *current = (T *) start;
+	T *current = static_cast<T*>(start);
 	while (current) {
 		current_stats.num_meta_data_bytes += sizeof(T);
-		current_stats.num_allocated_bytes += current->size;
-		current_stats.num_allocated_blocks++;
-		if (current->is_free) {
+        current_stats.num_allocated_blocks++;
+        current_stats.num_allocated_bytes += current->getSize();
+		if (current->isFree()) {
 			current_stats.num_free_blocks++;
-			current_stats.num_free_bytes += current->size;
+			current_stats.num_free_bytes += current->getSize();
 		}
-		current = current->next;
+		current = current->getNextInHeap();
 	}
 	current_stats.num_meta_data_bytes += sizeof(T) * blocks_mmap;
 	current_stats.num_allocated_bytes += bytes_mmap;
