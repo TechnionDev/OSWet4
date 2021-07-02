@@ -59,18 +59,7 @@ public:
      * @param new_prev The previous block in the heap
      * @param new_is_free Whether to allocate the block as free memory or not
      */
-    void init(size_t new_size, MallocMetadata *new_prev, bool new_is_free) {
-        if (new_is_free) {
-            num_of_free_bytes += new_size;
-            num_of_free_blocks++;
-        } else {
-            num_of_allocated_bytes += new_size;
-            num_of_allocated_blocks++;
-        }
-        this->is_free = new_is_free;
-        this->prev = new_prev;
-        this->size = new_size;
-    }
+    void init(size_t new_size, MallocMetadata *new_prev, bool new_is_free);
 
     size_t getSize() {
         return this->size;
@@ -162,21 +151,7 @@ public:
         this->bucket_ptr = bucket;
     }
 
-    void destroy(){
-        if (this->is_free){
-            num_of_free_bytes -= this->size;
-            num_of_free_blocks--;
-        } else {
-            num_of_allocated_bytes -= this->size;
-            num_of_allocated_blocks--;
-        }
-        MallocMetadata *next = this->getNextInHeap();
-        if (next) {
-            next->prev = this->prev;
-        }
-        this->size = 0;
-        this->prev_bucket_block = this->prev = this->next_bucket_block = nullptr;
-    }
+    void destroy();
 };
 
 class Bucket {
@@ -197,6 +172,26 @@ static Bucket buckets[NUM_OF_BUCKETS] = {Bucket()};
 static MallocMetadata *page_block_head = nullptr;
 static MallocMetadata *page_block_tail = nullptr;
 
+
+void MallocMetadata::destroy() {
+    if (this->is_free){
+        num_of_free_bytes -= this->size;
+        num_of_free_blocks--;
+    } else {
+        num_of_allocated_bytes -= this->size;
+        num_of_allocated_blocks--;
+    }
+    MallocMetadata *next = this->getNextInHeap();
+    if (next) {
+        next->prev = this->prev;
+    }
+    if (this == page_block_tail) {
+        page_block_tail = this->prev;
+    }
+    this->size = 0;
+    this->prev_bucket_block = this->prev = this->next_bucket_block = nullptr;
+}
+
 void MallocMetadata::setFree() {
     num_of_allocated_blocks--;
     num_of_free_blocks++;
@@ -212,6 +207,25 @@ MallocMetadata *MallocMetadata::getNextInHeap() {
         return nullptr;
     }
     return (MallocMetadata *) (((char *) this) + sizeof(MallocMetadata) + this->size);
+}
+
+void MallocMetadata::init(size_t new_size, MallocMetadata *new_prev, bool new_is_free) {
+    if (new_is_free) {
+        num_of_free_bytes += new_size;
+        num_of_free_blocks++;
+    } else {
+        num_of_allocated_bytes += new_size;
+        num_of_allocated_blocks++;
+    }
+    this->is_free = new_is_free;
+    this->prev = new_prev;
+    this->size = new_size;
+    if (this > page_block_tail) {
+        page_block_tail = this;
+    }
+    if (this->getNextInHeap()) {
+        this->getNextInHeap()->prev = this;
+    }
 }
 
 void Bucket::addBlock(MallocMetadata *block) {
@@ -266,6 +280,15 @@ MallocMetadata *Bucket::acquireBlock(size_t size) {
             this->list_tail = nullptr;
         }
         curr->setBucketPtr(nullptr);
+        // Check if the block needs splitting
+        if (curr->getSize() - size >= sizeof(MallocMetadata) + MIN_SPLIT_BLOCK_SIZE_BYTES) {
+            size_t leftover_size = curr->getSize() - sizeof(MallocMetadata) - size;
+            curr->setSize(size);
+            // Split the block and add the leftover to the current bucket
+            MallocMetadata *leftover = (MallocMetadata *) ((char *) (curr + 1) + size);
+            leftover->init(leftover_size, curr, true);
+            buckets[SIZE_TO_BUCKET(leftover_size)].addBlock(leftover);
+        }
         return curr;
     }
 
@@ -387,7 +410,6 @@ void *smalloc(size_t size) {
         return nullptr;
     }
     if (size >= KB * NUM_OF_BUCKETS) {
-        // TODO: Big allocation
         MallocMetadata *p = (MallocMetadata *) mmap(nullptr,
                                           size + sizeof(MallocMetadata),
                                           PROT_EXEC | PROT_READ | PROT_WRITE,
@@ -398,7 +420,6 @@ void *smalloc(size_t size) {
         return p + 1;
     }
 
-    // TODO: Reimplement this to fit the new buckets thingy
     MallocMetadata *requested = nullptr;
     if (!page_block_tail) {
         // Nothing was allocated
@@ -461,12 +482,20 @@ void *srealloc(void *oldp, size_t size) {
                                           -1,
                                           0);
         p->init(size, nullptr, false);
-        memcpy(p + 1, oldp, curr->getSize());
+        memmove(p + 1, oldp, curr->getSize());
         munmap(curr, curr->getSize());
         return p + 1;
     }
     if (curr->getSize() >= size) {
-        return oldp;// TODO: split excess if there's a "long" leftover
+        if (curr->getSize() >= MIN_SPLIT_BLOCK_SIZE_BYTES + size) {
+            size_t leftover_size = curr->getSize() - sizeof(MallocMetadata) - size;
+            curr->setSize(size);
+            // Split the block and add the leftover to the current bucket
+            MallocMetadata *leftover = (MallocMetadata *) ((char *) oldp + size);
+            leftover->init(leftover_size, curr, true);
+            buckets[SIZE_TO_BUCKET(leftover_size)].addBlock(leftover);
+        }
+        return oldp;
     }
     MallocMetadata *prev = curr->getPrevInHeap();
     MallocMetadata *next = curr->getNextInHeap();
@@ -475,8 +504,9 @@ void *srealloc(void *oldp, size_t size) {
         prev->removeSelfFromBucketChain();
         prev->setAllocated();
         prev->setSize(prev->getSize() + curr->getSize() + sizeof(MallocMetadata));
-        memmove(prev + 1, oldp, curr->getSize());
+        size_t curr_size = curr->getSize();
         curr->destroy();
+        memmove(prev + 1, oldp, curr_size);
         if (prev->getSize() >= MIN_SPLIT_BLOCK_SIZE_BYTES + size) {
             size_t leftover_size = prev->getSize() - sizeof(MallocMetadata) - size;
             prev->setSize(size);
@@ -507,9 +537,10 @@ void *srealloc(void *oldp, size_t size) {
         prev->removeSelfFromBucketChain();
         prev->setAllocated();
         prev->setSize(prev->getSize() + curr->getSize() + next->getSize() + 2 * sizeof(MallocMetadata));
-        memmove(prev + 1, oldp, curr->getSize());
+        size_t curr_size = curr->getSize();
         curr->destroy();
         next->destroy();
+        memmove(prev + 1, oldp, curr_size);
         if (prev->getSize() >= MIN_SPLIT_BLOCK_SIZE_BYTES + size) {
             size_t leftover_size = prev->getSize() - sizeof(MallocMetadata) - size;
             prev->setSize(size);
@@ -522,6 +553,7 @@ void *srealloc(void *oldp, size_t size) {
     } else if (curr == page_block_tail) {
         sbrk(size - curr->getSize());
         curr->setSize(size);
+        return oldp;
     } else {
         //allocate an entirely new block, and free the old block
         void *new_block = smalloc(size);
