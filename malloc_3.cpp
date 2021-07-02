@@ -44,8 +44,6 @@ class MallocMetadata {
     MallocMetadata *next_bucket_block;
     MallocMetadata *prev_bucket_block;
     void *bucket_ptr;
-    // TODO: change to bitfield to save space
-
 
     /**
      * Private function used to merge a recently freed block with its adjacent neighbours.
