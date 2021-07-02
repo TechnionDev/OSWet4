@@ -7,7 +7,6 @@
 #define KB 1024
 #define NUM_OF_BUCKETS 128
 #define MIN_SPLIT_BLOCK_SIZE_BYTES 128
-#define MIN_SIZE 24
 // TODO: Replace macro with this: min(((X) / NUM_OF_BUCKETS / KB), NUM_OF_BUCKETS - 1)
 #define SIZE_TO_BUCKET(X) ((X) / NUM_OF_BUCKETS / KB)
 #define EXCEPTION(name)                                  \
