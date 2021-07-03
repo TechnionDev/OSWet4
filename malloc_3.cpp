@@ -7,8 +7,8 @@
 #define KB 1024
 #define NUM_OF_BUCKETS 128
 #define MIN_SPLIT_BLOCK_SIZE_BYTES 128
-// TODO: Replace macro with this: min(((X) / NUM_OF_BUCKETS / KB), NUM_OF_BUCKETS - 1)
-#define SIZE_TO_BUCKET(X) ((X) / NUM_OF_BUCKETS / KB)
+// Fail safe. Cap max bucket. This will force the max ret value to be the last bucket (it works without it but just in case)
+#define SIZE_TO_BUCKET(X) (((X) / NUM_OF_BUCKETS / KB) >= NUM_OF_BUCKETS ? (NUM_OF_BUCKETS - 1) : ((X) / NUM_OF_BUCKETS / KB))
 #define EXCEPTION(name)                                  \
     class name : public MallocException {                \
     public:                                              \
