@@ -10,7 +10,7 @@ public:
     size_t size;
     bool is_free;
     MallocMetadata *next;
-    MallocMetadata *prev;
+    MallocMetadata *prev_in_heap;
 };
 
 MallocMetadata *block_list_tail = nullptr;
@@ -29,7 +29,7 @@ MallocMetadata *request_block(MallocMetadata *last, size_t size) {
     meta_block->size = size;
     meta_block->is_free = false;
     meta_block->next = nullptr;
-    meta_block->prev = last;
+    meta_block->prev_in_heap = last;
     block_list_top ? block_list_top->next = meta_block : block_list_top = meta_block;
 
     num_of_allocated_blocks++;

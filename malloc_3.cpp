@@ -7,8 +7,8 @@
 #define KB 1024
 #define NUM_OF_BUCKETS 128
 #define MIN_SPLIT_BLOCK_SIZE_BYTES 128
-// TODO: Replace macro with this: min(((X) / NUM_OF_BUCKETS / KB), NUM_OF_BUCKETS - 1)
-#define SIZE_TO_BUCKET(X) ((X) / NUM_OF_BUCKETS / KB)
+// Fail safe. Cap max bucket. This will force the max ret value to be the last bucket (it works without it but just in case)
+#define SIZE_TO_BUCKET(X) (((X) / NUM_OF_BUCKETS / KB) >= NUM_OF_BUCKETS ? (NUM_OF_BUCKETS - 1) : ((X) / NUM_OF_BUCKETS / KB))
 #define EXCEPTION(name)                                  \
     class name : public MallocException {                \
     public:                                              \
@@ -35,8 +35,8 @@ EXCEPTION(InvalidForMmapAllocations);
 
 class MallocMetadata {
     struct {
-        int is_free: 1;
-        int is_mmap: 1;
+        unsigned int is_free: 1;
+        unsigned int is_mmap: 1;
     } flags;
     size_t size;
     MallocMetadata *prev_in_heap;
@@ -70,9 +70,9 @@ public:
 
     void setSize(size_t new_size) {
         if (this->isFree()) {
-            num_of_free_bytes -= this->size - new_size;
+            num_of_free_bytes -= (long long) this->size - (long long) new_size;
         } else {
-            num_of_allocated_bytes -= this->size - new_size;
+            num_of_allocated_bytes -= (long long) this->size - (long long) new_size;
         }
         this->size = new_size;
     }
@@ -617,7 +617,6 @@ void *srealloc(void *oldp, size_t size) {
     //shouldn't reach to this
     return nullptr;
 }
-//TODO:: go over all of the functions and check if the statistics are updated
 
 size_t _num_free_blocks() {
     return num_of_free_blocks;

@@ -23,9 +23,9 @@ using namespace std;
 // don't change anything from the one in malloc_3.c !!not even the order of args!!!
 class MallocMetadata {
     struct {
-        int is_free: 1;
-        int is_mmap: 1;
-    }flags;
+        unsigned int is_free: 1;
+        unsigned int is_mmap: 1;
+    } flags;
     size_t size;
     MallocMetadata *prev_in_heap;
     MallocMetadata *next_bucket_block;
@@ -1020,7 +1020,7 @@ int main() {
 
     auto t1 = high_resolution_clock::now();
 
-    for (int i = 0 ; i < NUM_FUNC ; ++i) {
+    for (int i = 1 ; i < NUM_FUNC ; ++i) {
         pid_t pid = fork();
         if (pid == 0) {
             ans = checkFunc(functions[i], allocations, function_names[i]);
