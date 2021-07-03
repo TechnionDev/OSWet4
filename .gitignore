@@ -1,4 +1,5 @@
 submitters.txt
+*.zip
 .idea/
 cmake-build-debug/
 tamuz_tests_hw4_malloc2.cpp
