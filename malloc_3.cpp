@@ -7,7 +7,6 @@
 #define KB 1024
 #define NUM_OF_BUCKETS 128
 #define MIN_SPLIT_BLOCK_SIZE_BYTES 128
-#define MIN_SIZE 24
 // TODO: Replace macro with this: min(((X) / NUM_OF_BUCKETS / KB), NUM_OF_BUCKETS - 1)
 #define SIZE_TO_BUCKET(X) ((X) / NUM_OF_BUCKETS / KB)
 #define EXCEPTION(name)                                  \
@@ -36,8 +35,8 @@ EXCEPTION(InvalidForMmapAllocations);
 
 class MallocMetadata {
     struct {
-        int is_free: 1;
-        int is_mmap: 1;
+        unsigned int is_free: 1;
+        unsigned int is_mmap: 1;
     } flags;
     size_t size;
     MallocMetadata *prev_in_heap;
@@ -71,9 +70,9 @@ public:
 
     void setSize(size_t new_size) {
         if (this->isFree()) {
-            num_of_free_bytes -= this->size - new_size;
+            num_of_free_bytes -= (long long) this->size - (long long) new_size;
         } else {
-            num_of_allocated_bytes -= this->size - new_size;
+            num_of_allocated_bytes -= (long long) this->size - (long long) new_size;
         }
         this->size = new_size;
     }
