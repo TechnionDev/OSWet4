@@ -10,10 +10,10 @@ public:
     size_t size;
     bool is_free;
     MallocMetadata *next;
-    MallocMetadata *prev_in_heap;
+    MallocMetadata *prev;
 };
 
-MallocMetadata *block_list_tail = nullptr;
+MallocMetadata *block_list_base = nullptr;
 MallocMetadata *block_list_top = nullptr;
 size_t num_of_allocated_blocks = 0;
 size_t num_of_free_blocks = 0;
@@ -29,8 +29,11 @@ MallocMetadata *request_block(MallocMetadata *last, size_t size) {
     meta_block->size = size;
     meta_block->is_free = false;
     meta_block->next = nullptr;
-    meta_block->prev_in_heap = last;
-    block_list_top ? block_list_top->next = meta_block : block_list_top = meta_block;
+    meta_block->prev = last;
+    if (block_list_top) {
+        block_list_top->next = meta_block;
+    }
+    block_list_top = meta_block;
 
     num_of_allocated_blocks++;
     num_of_allocated_bytes += size;
@@ -38,7 +41,7 @@ MallocMetadata *request_block(MallocMetadata *last, size_t size) {
 }
 
 MallocMetadata *find_fitting_block(size_t size) {
-    MallocMetadata *curr = block_list_tail;
+    MallocMetadata *curr = block_list_base;
     while (curr) {
         if (curr->size >= size && curr->is_free) {
             return curr;
@@ -53,13 +56,13 @@ void *smalloc(size_t size) {
         return nullptr;
     }
     MallocMetadata *requested;
-    if (!block_list_tail) {
+    if (!block_list_base) {
         //nothing was allocated
         requested = request_block(nullptr, size);
         if (!requested) {
             return nullptr;
         }
-        block_list_tail = requested;
+        block_list_base = requested;
     } else {
         requested = find_fitting_block(size);
         if (!requested) {
@@ -80,10 +83,14 @@ void sfree(void *p) {
     if (!p) {
         return;
     }
+
     MallocMetadata *curr = (MallocMetadata *) p - 1;
+    if (curr->is_free) {
+        return;
+    }
     curr->is_free = true;
     num_of_free_blocks++;
-    num_of_free_bytes -= curr->size;
+    num_of_free_bytes += curr->size;
 }
 
 void *scalloc(size_t num, size_t size) {
@@ -107,6 +114,7 @@ void *srealloc(void *oldp, size_t size) {
         if (!new_block) {
             return nullptr;
         }
+        memcpy(new_block, oldp, curr->size);
         sfree(oldp);
         return new_block;
     }
@@ -121,11 +129,11 @@ size_t _num_free_bytes() {
 }
 
 size_t _num_allocated_blocks() {
-    return num_of_allocated_blocks + num_of_free_blocks;
+    return num_of_allocated_blocks;
 }
 
 size_t _num_allocated_bytes() {
-    return num_of_allocated_bytes + num_of_free_bytes;
+    return num_of_allocated_bytes;
 }
 
 size_t _num_meta_data_bytes() {
