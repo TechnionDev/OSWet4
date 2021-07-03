@@ -617,7 +617,6 @@ void *srealloc(void *oldp, size_t size) {
     //shouldn't reach to this
     return nullptr;
 }
-//TODO:: go over all of the functions and check if the statistics are updated
 
 size_t _num_free_blocks() {
     return num_of_free_blocks;
