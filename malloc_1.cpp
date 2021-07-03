@@ -13,14 +13,3 @@ void *smalloc(size_t size) {
 
     return old_brk;
 }
-
-int main() {
-    std::cout << "Hello, World!" << std::endl;
-
-    printf("%p\n",smalloc(3));
-    printf("%p\n",smalloc(3));
-    printf("%p\n",smalloc(3));
-    printf("%p\n",smalloc(3));
-    printf("%p\n",smalloc(3));
-    return 0;
-}
