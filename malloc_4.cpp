@@ -7,9 +7,11 @@
 #define KB 1024
 #define NUM_OF_BUCKETS 128
 #define MIN_SPLIT_BLOCK_SIZE_BYTES 128
-#define MIN_SIZE 24
-// TODO: Replace macro with this: min(((X) / NUM_OF_BUCKETS / KB), NUM_OF_BUCKETS - 1)
+#define ALIGN_SIZE(X) ((X) % 8 != 0 ? (X) + (8 - (X) % 8) : (X))
 #define SIZE_TO_BUCKET(X) ((X) / NUM_OF_BUCKETS / KB)
+#define USER_INDICATOR_TYPE void*
+#define METADATA_SIZE (sizeof(MallocMetadata) - sizeof(USER_INDICATOR_TYPE))
+#define USER_SPACE_TO_META(X) ((MallocMetadata*)((char*)(X) - METADATA_SIZE))
 #define EXCEPTION(name)                                  \
     class name : public MallocException {                \
     public:                                              \
@@ -36,14 +38,15 @@ EXCEPTION(InvalidForMmapAllocations);
 
 class MallocMetadata {
     struct {
-        int is_free: 1;
-        int is_mmap: 1;
+        unsigned int is_free: 1;
+        unsigned int is_mmap: 1;
     } flags;
     size_t size;
     MallocMetadata *prev_in_heap;
     MallocMetadata *next_bucket_block;
     MallocMetadata *prev_bucket_block;
     void *bucket_ptr;
+    USER_INDICATOR_TYPE user_indicator;
 
     /**
      * Private function used to merge a recently freed block with its adjacent neighbours.
@@ -184,6 +187,10 @@ public:
     }
 
     void destroy();
+
+    void *getUserDataAddress() {
+        return &this->user_indicator;
+    }
 };
 
 class Bucket {
@@ -238,7 +245,7 @@ MallocMetadata *MallocMetadata::getNextInHeap() {
     if (this >= page_block_tail || this->flags.is_mmap) {
         return nullptr;
     }
-    return (MallocMetadata *) (((char *) this) + sizeof(MallocMetadata) + this->size);
+    return (MallocMetadata *) (((char *) this) + METADATA_SIZE + this->size);
 }
 
 void MallocMetadata::init(size_t new_size, MallocMetadata *new_prev, bool new_is_free, bool is_mmap = false) {
@@ -319,11 +326,11 @@ MallocMetadata *Bucket::acquireBlock(size_t size) {
         }
         curr->setBucketPtr(nullptr);
         // Check if the block needs splitting
-        if (curr->getSize() - size >= sizeof(MallocMetadata) + MIN_SPLIT_BLOCK_SIZE_BYTES) {
-            size_t leftover_size = curr->getSize() - sizeof(MallocMetadata) - size;
+        if (curr->getSize() - size >= METADATA_SIZE + MIN_SPLIT_BLOCK_SIZE_BYTES) {
+            size_t leftover_size = curr->getSize() - METADATA_SIZE - size;
             curr->setSize(size);
             // Split the block and add the leftover to the current bucket
-            auto *leftover = (MallocMetadata *) ((char *) (curr + 1) + size);
+            auto *leftover = (MallocMetadata *) ((char *) (curr->getUserDataAddress()) + size);
             leftover->init(leftover_size, curr, true);
             buckets[SIZE_TO_BUCKET(leftover_size)].addBlock(leftover);
         }
@@ -338,11 +345,11 @@ MallocMetadata *Bucket::acquireBlock(size_t size) {
             }
             curr = next;
             // Check if the block needs splitting
-            if (curr->getSize() - size >= sizeof(MallocMetadata) + MIN_SPLIT_BLOCK_SIZE_BYTES) {
-                size_t leftover_size = curr->getSize() - sizeof(MallocMetadata) - size;
+            if (curr->getSize() - size >= METADATA_SIZE + MIN_SPLIT_BLOCK_SIZE_BYTES) {
+                size_t leftover_size = curr->getSize() - METADATA_SIZE - size;
                 curr->setSize(size);
                 // Split the block and add the leftover to the current bucket
-                auto *leftover = (MallocMetadata *) ((char *) (curr + 1) + size);
+                auto *leftover = (MallocMetadata *) ((char *) (curr->getUserDataAddress()) + size);
                 leftover->init(leftover_size, curr, true);
                 buckets[SIZE_TO_BUCKET(leftover_size)].addBlock(leftover);
             }
@@ -364,7 +371,7 @@ void MallocMetadata::mergeWithAdjacent() {
                 page_block_tail = this;
             }
             adjacent->removeSelfFromBucketChain();
-            this->setSize(this->getSize() + adjacent->getSize() + sizeof(MallocMetadata));
+            this->setSize(this->getSize() + adjacent->getSize() + METADATA_SIZE);
             adjacent->destroy();
             this->removeSelfFromBucketChain();
         }
@@ -376,7 +383,7 @@ void MallocMetadata::mergeWithAdjacent() {
                 page_block_tail = adjacent;
             }
             this->removeSelfFromBucketChain();
-            adjacent->setSize(adjacent->getSize() + this->getSize() + sizeof(MallocMetadata));
+            adjacent->setSize(adjacent->getSize() + this->getSize() + METADATA_SIZE);
             this->destroy();
             // Note that from now and on `this` is not defined. Take care....
             adjacent->removeSelfFromBucketChain();
@@ -433,7 +440,7 @@ MallocMetadata *request_block(size_t size) {
         meta_block->setAllocated();
         return meta_block;
     } else {
-        meta_block = (MallocMetadata *) (sbrk(sizeof(MallocMetadata) + size));
+        meta_block = (MallocMetadata *) (sbrk(METADATA_SIZE + size));
         if (meta_block == (void *) -1) {
             return nullptr;
         }
@@ -447,18 +454,19 @@ MallocMetadata *request_block(size_t size) {
 }
 
 void *smalloc(size_t size) {
+    size = ALIGN_SIZE(size);
     if (size == 0 || size > MAX_SIZE) {
         return nullptr;
     }
     if (size >= KB * NUM_OF_BUCKETS) {
         auto *p = (MallocMetadata *) mmap(nullptr,
-                                          size + sizeof(MallocMetadata),
+                                          size + METADATA_SIZE,
                                           PROT_EXEC | PROT_READ | PROT_WRITE,
                                           MAP_ANONYMOUS | MAP_PRIVATE,
                                           -1,
                                           0);
         p->init(size, nullptr, false, true);
-        return p + 1;
+        return p->getUserDataAddress();
     }
 
     MallocMetadata *requested = nullptr;
@@ -484,33 +492,36 @@ void *smalloc(size_t size) {
             requested->setAllocated();
         }
     }
-    return requested + 1;
+    return requested->getUserDataAddress();
 }
 
 void sfree(void *p) {
     if (!p) {
         return;
     }
-    MallocMetadata *curr = ((MallocMetadata *) p) - 1;
+    MallocMetadata *curr = USER_SPACE_TO_META(p);
     if (curr->getSize() >= KB * NUM_OF_BUCKETS) {
         size_t old_size = curr->getSize();
         curr->destroy();
-        munmap(curr, old_size + sizeof(MallocMetadata));
+        munmap(curr, old_size + METADATA_SIZE);
         return;
     }
     curr->setFree();
 }
 
 void *scalloc(size_t num, size_t size) {
-    void *block = smalloc(num * size);
+    size_t alloc_size = ALIGN_SIZE(size * num);
+    void *block = smalloc(alloc_size);
     if (not block) {
         return nullptr;
     }
-    memset(block, 0, num * size);
+    memset(block, 0, alloc_size);
     return block;
 }
 
 void *srealloc(void *oldp, size_t size) {
+    size = ALIGN_SIZE(size);
+
     if (!oldp) {
         return smalloc(size);
     }
@@ -518,10 +529,10 @@ void *srealloc(void *oldp, size_t size) {
         return nullptr;
     }
 
-    MallocMetadata *curr = (MallocMetadata *) oldp - 1;
+    MallocMetadata *curr = USER_SPACE_TO_META(oldp);
     if (size >= KB * NUM_OF_BUCKETS) {
         auto *new_block = (MallocMetadata *) mmap(nullptr,
-                                                  size + sizeof(MallocMetadata),
+                                                  size + METADATA_SIZE,
                                                   PROT_EXEC | PROT_READ | PROT_WRITE,
                                                   MAP_ANONYMOUS | MAP_PRIVATE,
                                                   -1,
@@ -529,14 +540,14 @@ void *srealloc(void *oldp, size_t size) {
         new_block->init(size, nullptr, false, true);
         size_t old_size = curr->getSize();
         curr->destroy();
-        memmove(new_block + 1, oldp, min(old_size, size));
-        munmap(curr, old_size + sizeof(MallocMetadata));
-        return new_block + 1;
+        memmove(new_block->getUserDataAddress(), oldp, min(old_size, size));
+        munmap(curr, old_size + METADATA_SIZE);
+        return new_block->getUserDataAddress();
     }
     // Keep the same location
     if (curr->getSize() >= size) {
-        if (curr->getSize() >= MIN_SPLIT_BLOCK_SIZE_BYTES + sizeof(MallocMetadata) + size) {
-            size_t leftover_size = curr->getSize() - sizeof(MallocMetadata) - size;
+        if (curr->getSize() >= MIN_SPLIT_BLOCK_SIZE_BYTES + METADATA_SIZE + size) {
+            size_t leftover_size = curr->getSize() - METADATA_SIZE - size;
             curr->setSize(size);
             // Split the block and add the leftover to the current bucket
             auto *leftover = (MallocMetadata *) ((char *) oldp + size);
@@ -553,53 +564,53 @@ void *srealloc(void *oldp, size_t size) {
         //merge with only the prev_in_heap block
         prev->removeSelfFromBucketChain();
         prev->setAllocated();
-        prev->setSize(prev->getSize() + curr->getSize() + sizeof(MallocMetadata));
+        prev->setSize(prev->getSize() + curr->getSize() + METADATA_SIZE);
         size_t curr_size = curr->getSize();
         curr->destroy();
-        memmove(prev + 1, oldp, curr_size);
-        if (prev->getSize() >= MIN_SPLIT_BLOCK_SIZE_BYTES + sizeof(MallocMetadata) + size) {
-            size_t leftover_size = prev->getSize() - sizeof(MallocMetadata) - size;
+        memmove(prev->getUserDataAddress(), oldp, curr_size);
+        if (prev->getSize() >= MIN_SPLIT_BLOCK_SIZE_BYTES + METADATA_SIZE + size) {
+            size_t leftover_size = prev->getSize() - METADATA_SIZE - size;
             prev->setSize(size);
             // Split the block and add the leftover to the current bucket
-            auto *leftover = (MallocMetadata *) ((char *) (prev + 1) + size);
+            auto *leftover = (MallocMetadata *) ((char *) (prev->getUserDataAddress()) + size);
             leftover->init(leftover_size, prev, true);
             buckets[SIZE_TO_BUCKET(leftover_size)].addBlock(leftover);
         }
-        return prev + 1;
+        return prev->getUserDataAddress();
     } else if (next and next->isFree() and next->getSize() + curr->getSize() >= size) {
         //merge with only the next block
         next->removeSelfFromBucketChain();
-        curr->setSize(curr->getSize() + next->getSize() + sizeof(MallocMetadata));
+        curr->setSize(curr->getSize() + next->getSize() + METADATA_SIZE);
         next->destroy();
-        if (curr->getSize() >= MIN_SPLIT_BLOCK_SIZE_BYTES + sizeof(MallocMetadata) + size) {
-            size_t leftover_size = curr->getSize() - sizeof(MallocMetadata) - size;
+        if (curr->getSize() >= MIN_SPLIT_BLOCK_SIZE_BYTES + METADATA_SIZE + size) {
+            size_t leftover_size = curr->getSize() - METADATA_SIZE - size;
             curr->setSize(size);
             // Split the block and add the leftover to the current bucket
-            auto *leftover = (MallocMetadata *) ((char *) (curr + 1) + size);
+            auto *leftover = (MallocMetadata *) ((char *) (curr->getUserDataAddress()) + size);
             leftover->init(leftover_size, curr, true);
             buckets[SIZE_TO_BUCKET(leftover_size)].addBlock(leftover);
         }
-        return curr + 1;
+        return curr->getUserDataAddress();
     } else if (curr != page_block_tail and prev and next->isFree() and prev->isFree()
                and prev->getSize() + next->getSize() + curr->getSize() >= size) {
         //merge with the next and prev_in_heap block
         next->removeSelfFromBucketChain();
         prev->removeSelfFromBucketChain();
         prev->setAllocated();
-        prev->setSize(prev->getSize() + curr->getSize() + next->getSize() + 2 * sizeof(MallocMetadata));
+        prev->setSize(prev->getSize() + curr->getSize() + next->getSize() + 2 * METADATA_SIZE);
         size_t curr_size = curr->getSize();
         curr->destroy();
         next->destroy();
-        memmove(prev + 1, oldp, curr_size);
-        if (prev->getSize() >= MIN_SPLIT_BLOCK_SIZE_BYTES + sizeof(MallocMetadata) + size) {
-            size_t leftover_size = prev->getSize() - sizeof(MallocMetadata) - size;
+        memmove(prev->getUserDataAddress(), oldp, curr_size);
+        if (prev->getSize() >= MIN_SPLIT_BLOCK_SIZE_BYTES + METADATA_SIZE + size) {
+            size_t leftover_size = prev->getSize() - METADATA_SIZE - size;
             prev->setSize(size);
             // Split the block and add the leftover to the current bucket
-            auto *leftover = (MallocMetadata *) ((char *) (prev + 1) + size);
+            auto *leftover = (MallocMetadata *) ((char *) (prev->getUserDataAddress()) + size);
             leftover->init(leftover_size, prev, true);
             buckets[SIZE_TO_BUCKET(leftover_size)].addBlock(leftover);
         }
-        return prev + 1;
+        return prev->getUserDataAddress();
     } else if (curr == page_block_tail) {
         sbrk(size - curr->getSize());
         curr->setSize(size);
@@ -615,8 +626,6 @@ void *srealloc(void *oldp, size_t size) {
         return new_addr;
     }
 
-    //shouldn't reach to this
-    return nullptr;
 }
 //TODO:: go over all of the functions and check if the statistics are updated
 
@@ -637,9 +646,9 @@ size_t _num_allocated_bytes() {
 }
 
 size_t _num_meta_data_bytes() {
-    return _num_allocated_blocks() * sizeof(MallocMetadata);
+    return _num_allocated_blocks() * METADATA_SIZE;
 }
 
 size_t _size_meta_data() {
-    return sizeof(MallocMetadata);
+    return METADATA_SIZE;
 }
